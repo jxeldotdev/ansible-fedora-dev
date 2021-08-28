@@ -1,0 +1,5 @@
+---
+# vars file for jfreeman-laptop
+
+personal_user: joel
+hostname: fedora-dev-laptop

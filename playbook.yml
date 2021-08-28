@@ -1,0 +1,11 @@
+---
+- name: Setup base configuration on laptop 
+  hosts: all
+  remote_user: joel
+  become_method: sudo
+  become: true
+  vars: 
+    personal_user: joel
+    hostname: fedora-dev-laptop
+  roles:
+    - './jfreeman-laptop/'

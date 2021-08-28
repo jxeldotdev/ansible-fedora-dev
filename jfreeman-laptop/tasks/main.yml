@@ -1,0 +1,217 @@
+---
+# tasks file for jfreeman-laptop
+
+- name: Set hostname
+  ansible.builtin.hostname:
+    name: "{{ hostname }}"
+
+- name: Configure DNF to use fastest mirror
+  ansible.builtin.copy:
+    src: files/dnf.conf
+    dest: /etc/dnf/dnf.conf
+    owner: root
+    group: root
+    mode: '0644'
+  
+- name: Update / Upgrade Packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+
+- name: Install RPMFusion
+  ansible.builtin.dnf:
+    name: 
+      - https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-{{ansible_distribution_major_version}}.noarch.rpm 
+      - https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-{{ansible_distribution_major_version}}.noarch.rpm
+    state: present
+    disable_gpg_check: true
+
+- name: Install useful utilities
+  block:
+    - name: Add VSCode Repo
+      ansible.builtin.yum_repository:
+        baseurl: "https://packages.microsoft.com/yumrepos/vscode"
+        description: "Visual Studio Code"
+        name: "vscode"
+        gpgkey: "https://packages.microsoft.com/keys/microsoft.asc"
+        gpgcheck: yes
+        enabled: yes
+        
+    - name: Update DNF Cache
+      ansible.builtin.dnf:
+        update_cache: yes
+
+    - name: Install useful packages
+      ansible.builtin.dnf:
+        name:  
+          - zsh
+          - git
+          - podman-compose
+          - code
+          - vim
+          - gpg
+          - dnf-plugins-core
+          - htop
+          - fira-code-fonts
+          - strace
+          - starship
+
+    - name: Install media codecs
+      ansible.builtin.dnf:
+        name:  
+          - gstreamer1-plugins-bad-*
+          - gstreamer1-plugins-good-*
+          - gstreamer1-plugins-base
+          - gstreamer1-plugin-openh264
+          - gstreamer1-libav
+          - lame*
+          - '@Multimedia'
+        exclude: 
+          - gstreamer1-plugins-bad-free-devel
+          - lame-devel
+
+    - name: Set default shell to ZSH
+      ansible.builtin.user:
+        name: "{{ personal_user }}"
+        shell: /bin/zsh
+
+    - name: Create temp directory
+      ansible.builtin.file: path=/tmp/ansible-fedora/ state=directory
+  
+- name: Install Cloud Tools
+  block:
+    - name: Check if AWS CLI is installed
+      ansible.builtin.command: aws --version
+      ignore_errors: yes
+      register: aws_cli_test
+    
+    - name: Install AWS CLI
+      when: aws_cli_test.rc != 0
+      block:
+        - name: Install AWS CLI Team GPG Key
+          ansible.builtin.copy:
+            src: files/aws-cli-team-gpg.key
+            dest: /tmp/ansible-fedora/aws-cli-team-gpg
+
+        - name: Import AWS CLI Team GPG Key
+          ansible.builtin.command: gpg --import /tmp/ansible-fedora/aws-cli-team-gpg
+          become_user: "{{ personal_user }}"
+      
+        - name: Download AWS CLI Installer and GPG Signature
+          ansible.builtin.get_url:
+            url: "{{ item.url }}"
+            dest: "{{ item.dest }}"
+          loop:
+            - { url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip", dest: "/tmp/ansible-fedora/awscliv2.zip" }
+            - { url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip.sig", dest: "/tmp/ansible-fedora/awscliv2.zip.sig"}
+          
+        - name: Verify Integrity of AWS CLI Installer
+          ansible.builtin.shell: gpg --verify /tmp/ansible-fedora/awscliv2.zip.sig /tmp/ansible-fedora/awscliv2.zip
+          become_user: "{{ personal_user }}"
+      
+        - name: Unzip AWS CLI installer
+          ansible.builtin.unarchive:
+            src: /tmp/ansible-fedora/awscliv2.zip
+            remote_src: yes
+            dest: /tmp/ansible-fedora/
+
+        - name: Install AWS CLI
+          ansible.builtin.shell: /tmp/ansible-fedora/aws/install
+            
+        - name: Verify AWS CLI works
+          ansible.builtin.command: aws --version
+
+
+    - name: Check if Terraform or Packer is installed
+      ansible.builtin.command: which packer terraform
+      ignore_errors: yes
+      register: packer_terraform_test
+
+    - name: Install Terraform and Packer
+      when: packer_terraform_test.rc != 0
+      block:
+        - name: Add HashiCorp Repository
+          ansible.builtin.yum_repository:
+            baseurl: https://rpm.releases.hashicorp.com/fedora/$releasever/$basearch/stable
+            description: "Hashicorp Stable - $basearch"
+            name: hashicorp
+            enabled: yes
+            gpgcheck: yes
+            gpgkey: https://rpm.releases.hashicorp.com/gpg
+
+        - name: Update DNF Cache
+          ansible.builtin.dnf:
+            update_cache: yes
+        
+        - name: Install Packer and Terraform
+          ansible.builtin.dnf:
+            name: 
+              - terraform
+              - packer
+
+    - name: Install Ansible
+      ansible.builtin.pip:
+        state: present
+        name: ansible
+
+    - name: Check if AWS Vault is installed
+      ansible.builtin.command: which aws-vault
+      ignore_errors: yes
+      register: aws_vault_test
+
+    - name: Install aws-vault
+      when: aws_vault_test.rc != 0
+      block:
+        - name: Download latest binary and SHA256SUMS
+          ansible.builtin.get_url:
+            url: https://github.com/99designs/aws-vault/releases/download/v6.3.1/aws-vault-linux-amd64
+            dest: /tmp/ansible-fedora/aws-vault-linux-amd64
+            checksum: "sha256:84cfab75012eb272add8b09cb2d295941b977cf2bf58b3fb3caa4c4adac6f17f"
+
+        - name: Move aws-vault binary
+          ansible.builtin.copy: 
+            remote_src: yes
+            src: /tmp/ansible-fedora/aws-vault-linux-amd64
+            dest: /usr/local/bin/aws-vault
+            owner: root
+            group: root
+            mode: '0755'
+
+    # Setup project directory structure
+    - name: Remove temporary directory
+      ansible.builtin.file:
+        path: /tmp/ansible-fedora
+        state: absent
+
+      
+- name: Start and enable Podman (Docker Alternative)
+  ansible.builtin.service:
+    name: podman
+    state: started
+    enabled: yes
+  
+
+# Setup project directory structure
+- name: Create directories for projects
+  ansible.builtin.file:
+    path: "/home/{{ personal_user }}/projects"
+    owner: "{{ personal_user }}"
+    group: "{{ personal_user }}"
+    mode: 0755
+    state: directory
+
+
+
+- name: Deploy zshrc
+  ansible.builtin.copy:
+    src: files/zshrc
+    dest: "/home/{{ personal_user }}/.zshrc"
+    mode: 0644
+    owner: "{{ personal_user }}"
+    group: "{{ personal_user }}"
+
+- name: Setup AWS CLI Command completion
+  ansible.builtin.shell: complete -C '/usr/local/bin/aws_completer' aws
+  become_user: "{{ personal_user }}"
+  
+  

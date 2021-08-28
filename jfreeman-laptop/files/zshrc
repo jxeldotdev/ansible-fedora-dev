@@ -1,0 +1,6 @@
+eval "$(starship init zsh)"
+eval "$(ssh-agent)"
+
+autoload bashcompinit && bashcompinit
+autoload -Uz compinit && compinit
+
